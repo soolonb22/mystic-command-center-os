@@ -25,6 +25,7 @@ import {
   TITLES,
   addXp,
   attackLadder,
+  activeDragons,
   bumpStreak,
   defaultDB,
   formatLong,
@@ -36,6 +37,7 @@ import {
   mergeDB,
   moonInfo,
   nextTitle,
+  nextBite,
   readingById,
   rollDaily,
   saveDB,
@@ -46,8 +48,11 @@ import {
   titleFor,
   todayKey,
   uid,
+  universalNumber,
+  writeDragons,
 } from "@/mystic/engine";
 import type { DB, Dragon, Reading, ReadingType, Settings } from "@/mystic/engine";
+import { CardArt, MeaningArt } from "@/mystic/card-art";
 
 type ViewId =
   | "dashboard"
@@ -76,10 +81,11 @@ type Api = {
   mood: string;
   setMood: (value: string) => void;
   forgeDragon: (task: string) => void;
-  easier: () => void;
-  startDragon: () => void;
-  completeDragon: () => void;
-  releaseDragon: () => void;
+  easier: (id?: string) => void;
+  didBite: (id?: string) => void;
+  startDragon: (id?: string) => void;
+  completeDragon: (id?: string) => void;
+  releaseDragon: (id?: string) => void;
   addJournal: (input: { category: string; text: string; mood: string }) => void;
   removeJournal: (id: string) => void;
   addSync: (input: { type: string; text: string }) => void;
@@ -101,8 +107,8 @@ function useOs() {
 }
 
 const NAV: { id: ViewId; label: string; icon: typeof Moon }[] = [
+  { id: "dragon", label: "Quests", icon: Swords },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "dragon", label: "Dragon Slayer", icon: Swords },
   { id: "tarot", label: "Tarot Oracle", icon: Sparkles },
   { id: "shadow", label: "Shadow Work", icon: Moon },
   { id: "journal", label: "Journal", icon: BookOpen },
@@ -118,7 +124,7 @@ const NAV: { id: ViewId; label: string; icon: typeof Moon }[] = [
 export function OsApp() {
   const [db, setDb] = useState<DB | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [view, setViewState] = useState<ViewId>("dashboard");
+  const [view, setViewState] = useState<ViewId>("dragon");
   const [query, setQuery] = useState("");
   const [navOpen, setNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -208,7 +214,7 @@ export function OsApp() {
           const clean = task.trim();
           if (!clean) return;
           mutate((current) => {
-            const dragon: Dragon = {
+            const quest: Dragon = {
               id: uid(),
               task: clean,
               attacks: attackLadder(clean),
@@ -216,90 +222,118 @@ export function OsApp() {
               started: false,
               completed: false,
               date: todayKey(),
+              bitesDone: 0,
               awarded: { generated: true, started: false, completed: false },
             };
-            const history = current.dragon.current
-              ? [current.dragon.current, ...current.dragon.history].slice(0, 200)
-              : current.dragon.history;
+            const open = [quest, ...activeDragons(current)].slice(0, 40);
             return {
-              db: addXp({ ...current, dragon: { current: dragon, history } }, 10, "Attack generated"),
-              toast: "Courage +10 · tiny attack ready",
+              db: addXp(writeDragons({ ...current, dragon: { ...current.dragon, open, current: quest } }, open, quest.id), 10, "Quest added"),
+              toast: "Courage +10 · first bite is ready",
             };
           });
         },
-        easier: () =>
+        easier: (id) =>
           mutate((current) => {
-            const dragon = current.dragon.current;
-            if (!dragon || dragon.completed) return { db: current };
-            if (dragon.attackIndex >= dragon.attacks.length - 1) {
-              return { db: current, toast: "This is already the smallest step." };
+            const open = activeDragons(current);
+            const quest = open.find((row) => row.id === (id ?? current.dragon.current?.id)) ?? open[0];
+            if (!quest || quest.completed) return { db: current };
+            if (quest.attackIndex >= quest.attacks.length - 1) {
+              return { db: current, toast: "This bite is already as small as it gets." };
             }
+            const nextQuest = { ...quest, attackIndex: quest.attackIndex + 1 };
+            const list = open.map((row) => (row.id === quest.id ? nextQuest : row));
             return {
-              db: {
-                ...current,
-                dragon: { ...current.dragon, current: { ...dragon, attackIndex: dragon.attackIndex + 1 } },
-              },
-              toast: "The step got smaller.",
+              db: writeDragons(current, list, quest.id),
+              toast: "Smaller. Still a real step.",
             };
           }),
-        startDragon: () =>
+        didBite: (id) =>
           mutate((current) => {
-            const dragon = current.dragon.current;
-            if (!dragon || dragon.started || dragon.completed) return { db: current };
+            const open = activeDragons(current);
+            const quest = open.find((row) => row.id === (id ?? current.dragon.current?.id)) ?? open[0];
+            if (!quest || quest.completed) return { db: current };
+            const bitesDone = (quest.bitesDone ?? 0) + 1;
+            const attacks = [...quest.attacks];
+            const attackIndex = quest.attackIndex === 0 ? 0 : quest.attackIndex - 1;
+            if (quest.attackIndex === 0) attacks[0] = nextBite(quest.task, bitesDone);
+            const nextQuest: Dragon = {
+              ...quest,
+              attacks,
+              attackIndex,
+              bitesDone,
+              started: true,
+              awarded: { ...quest.awarded, started: true },
+            };
+            let next = writeDragons(current, open.map((row) => (row.id === quest.id ? nextQuest : row)), quest.id);
+            let gained = 8;
+            if (!quest.awarded.started) {
+              next = addXp(next, 15, "Quest started");
+              gained += 15;
+            }
+            next = addXp(next, 8, "Bite done");
             return {
-              db: addXp(
-                {
-                  ...current,
-                  dragon: {
-                    ...current.dragon,
-                    current: { ...dragon, started: true, awarded: { ...dragon.awarded, started: true } },
-                  },
-                },
-                15,
-                "Dragon faced",
-              ),
+              db: next,
+              toast: bitesDone >= 3 ? `Courage +${gained} · ${bitesDone} bites. You can call this quest done.` : `Courage +${gained} · bite done`,
+            };
+          }),
+        startDragon: (id) =>
+          mutate((current) => {
+            const open = activeDragons(current);
+            const quest = open.find((row) => row.id === (id ?? current.dragon.current?.id)) ?? open[0];
+            if (!quest || quest.started || quest.completed) return { db: current };
+            const nextQuest = { ...quest, started: true, awarded: { ...quest.awarded, started: true } };
+            return {
+              db: addXp(writeDragons(current, open.map((row) => (row.id === quest.id ? nextQuest : row)), quest.id), 15, "Quest started"),
               toast: "Courage +15 · you started",
             };
           }),
-        completeDragon: () =>
+        completeDragon: (id) =>
           mutate((current) => {
-            const dragon = current.dragon.current;
-            if (!dragon || dragon.completed) return { db: current };
+            const open = activeDragons(current);
+            const quest = open.find((row) => row.id === (id ?? current.dragon.current?.id)) ?? open[0];
+            if (!quest || quest.completed) return { db: current };
             const today = todayKey();
             const streak = bumpStreak(current.streaks.dragon, current.streaks.lastDragon, today);
+            const done: Dragon = {
+              ...quest,
+              started: true,
+              completed: true,
+              awarded: { ...quest.awarded, started: true, completed: true },
+            };
+            const rest = open.filter((row) => row.id !== quest.id);
             let next: DB = {
               ...current,
               streaks: { ...current.streaks, dragon: streak.value, lastDragon: streak.last },
               dragon: {
-                ...current.dragon,
-                current: {
-                  ...dragon,
-                  started: true,
-                  completed: true,
-                  awarded: { ...dragon.awarded, started: true, completed: true },
-                },
+                current: rest[0] ?? null,
+                open: rest,
+                history: [done, ...current.dragon.history].slice(0, 200),
               },
             };
             let gained = 40;
-            if (!dragon.awarded.started) {
-              next = addXp(next, 15, "Dragon faced");
+            if (!quest.awarded.started) {
+              next = addXp(next, 15, "Quest started");
               gained += 15;
             }
-            next = addXp(next, 40, "Dragon completed");
-            return { db: next, toast: `Courage +${gained} · dragon completed` };
+            next = addXp(next, 40, "Quest finished");
+            return { db: next, toast: `Courage +${gained} · quest finished` };
           }),
-        releaseDragon: () =>
+        releaseDragon: (id) =>
           mutate((current) => {
-            if (!current.dragon.current) return { db: current };
+            const open = activeDragons(current);
+            const quest = open.find((row) => row.id === (id ?? current.dragon.current?.id)) ?? open[0];
+            if (!quest) return { db: current };
+            const rest = open.filter((row) => row.id !== quest.id);
             return {
               db: {
                 ...current,
                 dragon: {
-                  current: null,
-                  history: [current.dragon.current, ...current.dragon.history].slice(0, 200),
+                  current: rest[0] ?? null,
+                  open: rest,
+                  history: [quest, ...current.dragon.history].slice(0, 200),
                 },
               },
-              toast: "Dragon released. Naming it was already a kind of courage.",
+              toast: "Quest set down. Adding it still counted.",
             };
           }),
         addJournal: (input) => {
@@ -567,34 +601,35 @@ function ViewSwitch() {
 }
 
 function DragonDock() {
-  const { db, setView, easier, startDragon, completeDragon } = useOs();
-  const dragon = db.dragon.current;
+  const { db, setView, easier, didBite, completeDragon } = useOs();
+  const open = activeDragons(db);
+  const dragon = db.dragon.current && !db.dragon.current.completed ? db.dragon.current : open[0];
   const attack = dragon ? dragon.attacks[dragon.attackIndex] ?? dragon.attacks[0] : "";
   return (
-    <div className="dock" aria-label="Today's dragon">
+    <div className="dock" aria-label="Next bite">
       <div className="dock-copy">
-        <p className="eyebrow">Today's dragon — always in view</p>
+        <p className="eyebrow">{open.length ? `${open.length} open quest${open.length === 1 ? "" : "s"}` : "Quest list"}</p>
         <p className="clamp">
-          <strong>{dragon ? dragon.task : "No dragon named yet."}</strong>
+          <strong>{dragon ? dragon.task : "Nothing on the list yet."}</strong>
         </p>
-        <p className="meta clamp">{dragon ? `Tiny attack: ${attack}` : "Name the task you are avoiding. It gets smaller from here."}</p>
+        <p className="meta clamp">{dragon ? `Next bite: ${attack}` : "Add a hard task. It comes back as a bite small enough to finish."}</p>
       </div>
       <div className="row-actions">
-        {dragon && !dragon.completed ? (
+        {dragon ? (
           <>
-            <button className="btn" type="button" onClick={easier} disabled={dragon.attackIndex >= dragon.attacks.length - 1}>
-              Easier step
+            <button className="btn" type="button" onClick={() => easier(dragon.id)} disabled={dragon.attackIndex >= dragon.attacks.length - 1}>
+              Too big
             </button>
-            <button className="btn" type="button" onClick={startDragon} disabled={dragon.started}>
-              {dragon.started ? "Started" : "I started"}
+            <button className="btn" type="button" onClick={() => didBite(dragon.id)}>
+              Did this bite
             </button>
-            <button className="btn btn-gold" type="button" onClick={completeDragon}>
-              I finished
+            <button className="btn btn-gold" type="button" onClick={() => completeDragon(dragon.id)}>
+              Quest done
             </button>
           </>
         ) : (
           <button className="btn btn-gold" type="button" onClick={() => setView("dragon")}>
-            {dragon?.completed ? "Name another" : "Name the dragon"}
+            Add a quest
           </button>
         )}
       </div>
@@ -608,6 +643,7 @@ function Dashboard() {
   const reading = readingById(db, daily?.readingId);
   const progress = levelProgress(db.xp.value);
   const moon = moonInfo();
+  const open = activeDragons(db);
   return (
     <section className="stack" aria-labelledby="dash-title">
       <div className="view-head">
@@ -636,27 +672,29 @@ function Dashboard() {
           <span className="meta">{db.streaks.journal ? "days of return" : "Begins when you write"}</span>
         </article>
         <article className="crystal stat">
-          <p className="eyebrow">Dragon streak</p>
+          <p className="eyebrow">Quests finished</p>
           <strong>{db.streaks.dragon}</strong>
-          <span className="meta">{db.streaks.dragon ? "dragons met" : "Begins when one is finished"}</span>
+          <span className="meta">{db.streaks.dragon ? "day streak" : "Begins when a quest is finished"}</span>
         </article>
       </div>
       <div className="dash">
         <div className="stack">
           <article className="crystal">
-            <p className="eyebrow">Today's dragon</p>
-            {db.dragon.current ? (
+            <p className="eyebrow">Open quests</p>
+            {open.length ? (
               <>
-                <h3>{db.dragon.current.task}</h3>
-                <p>{db.dragon.current.attacks[db.dragon.current.attackIndex]}</p>
-                <p className="meta">{db.dragon.current.completed ? "Completed today." : db.dragon.current.started ? "Started. Small still counts." : "Not started. The tiny attack is enough."}</p>
+                <h3>{open.length === 1 ? open[0]!.task : `${open.length} things, each with a smaller bite`}</h3>
+                <p>{open[0] ? open[0].attacks[open[0].attackIndex] ?? open[0].attacks[0] : ""}</p>
+                <button className="btn" type="button" onClick={() => setView("dragon")}>
+                  Open the list
+                </button>
               </>
             ) : (
               <>
-                <h3>Nothing named</h3>
-                <p>Avoidance gets heavier in the dark. Give it a name and the temple will hand you a smaller door.</p>
+                <h3>The list is clear</h3>
+                <p>Add something hard. It will be handed back as a bite you can actually finish.</p>
                 <button className="btn" type="button" onClick={() => setView("dragon")}>
-                  Face it
+                  Add a quest
                 </button>
               </>
             )}
@@ -667,12 +705,15 @@ function Dashboard() {
               <>
                 <Omen type={reading.type} />
                 <p className="oracle">{reading.oracle}</p>
-                <div className="row-actions">
+                <div className="mini-spread">
                   {reading.cards.map((card) => (
-                    <span key={`${card.id}-${card.position}`} className="chip">
-                      {card.name}
-                      {card.reversed ? " · rev" : ""}
-                    </span>
+                    <button key={`${card.id}-${card.position}`} className="mini-card" type="button" onClick={() => setView("tarot")}>
+                      <CardArt cardId={card.id} name={card.name} suit={card.suit} rank={card.rank} reversed={card.reversed} />
+                      <span>
+                        {card.name}
+                        {card.reversed ? " · rev" : ""}
+                      </span>
+                    </button>
                   ))}
                 </div>
                 <button className="btn" type="button" onClick={() => setView("tarot")}>
@@ -715,20 +756,20 @@ function Dashboard() {
 }
 
 function DragonView() {
-  const { db, forgeDragon, easier, startDragon, completeDragon, releaseDragon } = useOs();
+  const { db, forgeDragon, easier, didBite, completeDragon, releaseDragon } = useOs();
   const [task, setTask] = useState("");
-  const dragon = db.dragon.current;
-  const attack = dragon ? dragon.attacks[dragon.attackIndex] ?? "" : "";
+  const open = activeDragons(db);
+  const done = db.dragon.history.filter((quest) => quest.completed).slice(0, 6);
   return (
     <section className="stack">
       <div className="view-head">
         <div>
-          <p className="eyebrow">Dragon Slayer</p>
-          <h2>Make the avoided thing smaller</h2>
+          <p className="eyebrow">Quest list</p>
+          <h2>Hard things, smaller bites</h2>
         </div>
       </div>
       <article className="crystal">
-        <p>This is not a to-do list. Name the task you are orbiting. The temple answers with a tiny attack, then a smaller one, until starting is almost nothing.</p>
+        <p>Add the real task, even if it feels too big. The list gives you one finishable bite. If that bite is still too big, shrink it. Done bites stack. The whole quest ends only when you say so.</p>
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -738,36 +779,56 @@ function DragonView() {
           }}
         >
           <label className="field">
-            <span>What task am I avoiding?</span>
-            <input value={task} onChange={(event) => setTask(event.target.value)} placeholder="The email, the form, the first sentence…" />
+            <span>Add a quest</span>
+            <input value={task} onChange={(event) => setTask(event.target.value)} placeholder="The email, the dishes, the form, the first paragraph…" />
           </label>
           <button className="btn btn-gold" type="submit">
-            {dragon ? "Replace today's dragon" : "Name today's dragon"}
+            Add to the list
           </button>
         </form>
       </article>
-      {dragon ? (
+      {open.length ? (
+        <ul className="list quest-list">
+          {open.map((quest) => {
+            const bite = quest.attacks[quest.attackIndex] ?? quest.attacks[0];
+            const smallest = quest.attackIndex >= quest.attacks.length - 1;
+            return (
+              <li key={quest.id} className="entry crystal quest">
+                <p className="eyebrow">{quest.bitesDone ? `${quest.bitesDone} bite${quest.bitesDone === 1 ? "" : "s"} done` : "Not started"}</p>
+                <h3>{quest.task}</h3>
+                <p className="oracle">{bite}</p>
+                <div className="row-actions">
+                  <button className="btn" type="button" onClick={() => easier(quest.id)} disabled={smallest}>
+                    {smallest ? "Already tiny" : "Too big"}
+                  </button>
+                  <button className="btn" type="button" onClick={() => didBite(quest.id)}>
+                    Did this bite
+                  </button>
+                  <button className="btn btn-gold" type="button" onClick={() => completeDragon(quest.id)}>
+                    Quest done
+                  </button>
+                  <button className="btn btn-ghost" type="button" onClick={() => releaseDragon(quest.id)}>
+                    Let it go
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="crystal empty">No open quests. The next hard thing can be one line.</p>
+      )}
+      {done.length ? (
         <article className="crystal stack">
-          <p className="eyebrow">{dragon.completed ? "Completed" : "Today's dragon"}</p>
-          <h3>{dragon.task}</h3>
-          <p className="oracle">{attack}</p>
-          <p className="meta">
-            Step {Math.min(dragon.attackIndex + 1, dragon.attacks.length)} of {dragon.attacks.length}. Each easier step is still a real move.
-          </p>
-          <div className="row-actions">
-            <button className="btn" type="button" onClick={easier} disabled={dragon.completed || dragon.attackIndex >= dragon.attacks.length - 1}>
-              Generate easier step
-            </button>
-            <button className="btn" type="button" onClick={startDragon} disabled={dragon.started || dragon.completed}>
-              {dragon.started ? "Started" : "I started"}
-            </button>
-            <button className="btn btn-gold" type="button" onClick={completeDragon} disabled={dragon.completed}>
-              {dragon.completed ? "Finished" : "I finished"}
-            </button>
-            <button className="btn btn-ghost" type="button" onClick={releaseDragon}>
-              Release this dragon
-            </button>
-          </div>
+          <p className="eyebrow">Finished</p>
+          <ul className="list">
+            {done.map((quest) => (
+              <li key={quest.id} className="entry">
+                <h3>{quest.task}</h3>
+                <p className="meta">{quest.bitesDone ? `${quest.bitesDone} bites · ` : ""}{formatWhen(quest.date)}</p>
+              </li>
+            ))}
+          </ul>
         </article>
       ) : null}
     </section>
@@ -1052,17 +1113,32 @@ function VoiceView() {
 
 function NumbersView() {
   const daily = useOs().db.dailyState;
+  const [drawn, setDrawn] = useState<number | null>(null);
+  const drawnMeaning = drawn == null ? null : universalNumber(drawn);
   return (
     <section className="stack">
       <div className="view-head">
         <div>
           <p className="eyebrow">Cosmic Numbers</p>
-          <h2>Nine figures for the day</h2>
+          <h2>Nine figures, and one you draw</h2>
         </div>
+        <button
+          className="btn btn-gold"
+          type="button"
+          onClick={() => setDrawn(1 + Math.floor(Math.random() * 99))}
+        >
+          Draw a number
+        </button>
       </div>
       <article className="crystal stack">
-        <p>Angel numbers 11, 22, 33, 44, 55, 66, 77, 88, and 99 are marked in gold. Mirrors, repeats, and runs are noted underneath. They renew tomorrow.</p>
-        {daily ? <Numbers nums={daily.numbers} /> : null}
+        <p>Angel numbers 11, 22, 33, 44, 55, 66, 77, 88, and 99 are marked in gold. Choose any figure, or draw one from 1 to 99, and the universal meaning opens with its image.</p>
+        {drawnMeaning ? (
+          <p className="meta" aria-live="polite">
+            Drawn from the well: {drawnMeaning.value}. Not part of today's nine unless it also appears there.
+          </p>
+        ) : null}
+        {drawnMeaning ? <NumberMeaning value={drawnMeaning.value} kicker="Random draw" /> : null}
+        {daily ? <Numbers nums={daily.numbers} detail /> : null}
       </article>
     </section>
   );
@@ -1207,7 +1283,7 @@ function XpView() {
       </div>
       <article className="crystal">
         <p className="eyebrow">How courage is counted</p>
-        <p>Daily tarot 15 · check-in 10 · first journal of the day 20 · later entries 8 · a logged sign 12 · naming a dragon 10 · starting 15 · finishing 40.</p>
+        <p>Daily tarot 15 · check-in 10 · first journal of the day 20 · later entries 8 · a logged sign 12 · adding a quest 10 · a bite 8 · starting 15 · finishing a quest 40.</p>
       </article>
       <ul className="list crystal">
         {db.xp.log.length === 0 ? <li>No courage logged yet. Opening the day already begins the count.</li> : null}
@@ -1424,7 +1500,7 @@ function Spread({ reading }: { reading: Reading }) {
               <span>{card.reversed ? "Reversed" : "Upright"}</span>
               <span>{card.position}</span>
             </header>
-            <SuitMark suit={card.suit} />
+            <CardArt cardId={card.id} name={card.name} suit={card.suit} rank={card.rank} reversed={card.reversed} />
             <h3>{card.name}</h3>
             <p className="keywords">{card.keywords.join(" · ")}</p>
           </article>
@@ -1432,20 +1508,23 @@ function Spread({ reading }: { reading: Reading }) {
       </div>
       <div className="reading-list">
         {reading.cards.map((card) => (
-          <article key={`${card.position}-${card.id}-text`} className="crystal">
-            <p className="eyebrow">
-              {card.position} · {card.reversed ? "Reversed" : "Upright"}
-            </p>
-            <h3>{card.name}</h3>
-            <p>{card.meaning}</p>
-            <p>
-              <strong>Prompt. </strong>
-              {card.prompt}
-            </p>
-            <p>
-              <strong>Action. </strong>
-              {card.action}
-            </p>
+          <article key={`${card.position}-${card.id}-text`} className="crystal reading-with-art">
+            <CardArt cardId={card.id} name={card.name} suit={card.suit} rank={card.rank} reversed={card.reversed} />
+            <div>
+              <p className="eyebrow">
+                {card.position} · {card.reversed ? "Reversed" : "Upright"}
+              </p>
+              <h3>{card.name}</h3>
+              <p>{card.meaning}</p>
+              <p>
+                <strong>Prompt. </strong>
+                {card.prompt}
+              </p>
+              <p>
+                <strong>Action. </strong>
+                {card.action}
+              </p>
+            </div>
           </article>
         ))}
       </div>
@@ -1475,8 +1554,9 @@ function Omen({ type }: { type: ReadingType }) {
   return null;
 }
 
-function Numbers({ nums }: { nums: number[] }) {
+function Numbers({ nums, detail = false }: { nums: number[]; detail?: boolean }) {
   const info = inspectNumbers(nums);
+  const [active, setActive] = useState(0);
   const notes = [
     ...info.items.filter((item) => item.angel).map((item) => `${item.value} is an angel number`),
     ...info.mirrors.map((pair) => `Mirrored pair: ${pair}`),
@@ -1490,17 +1570,50 @@ function Numbers({ nums }: { nums: number[] }) {
       <ol className="num-row">
         {info.items.map((item, index) => {
           const kind = item.angel ? "Angel number" : item.palindrome ? "Mirrored number" : item.repeat ? "Repeated number" : "Number";
+          const meaning = universalNumber(item.value);
+          const selected = detail && active === index;
+          const face = (
+            <>
+              <MeaningArt value={item.value} seed={index} root={meaning.root} angel={item.angel} title={`${item.value}, ${meaning.title}`} />
+              <span className="num-value">{item.value}</span>
+              <span className="num-tag">{item.angel ? "Angel" : item.palindrome ? "Mirror" : item.repeat ? "Repeat" : ""}</span>
+              <span className="sr-only">{kind}</span>
+            </>
+          );
           return (
             <li key={`${item.value}-${index}`} className={item.angel ? "num is-angel" : item.palindrome || item.repeat ? "num is-special" : "num"}>
-              <span className="num-value">{item.value}</span>
-              <span className="num-tag">{item.angel ? "Angel" : item.palindrome ? "Mirror" : item.repeat ? "Repeat" : kind === "Number" ? "" : ""}</span>
-              <span className="sr-only">{kind}</span>
+              {detail ? (
+                <button className={selected ? "num-btn is-selected" : "num-btn"} type="button" aria-pressed={selected} onClick={() => setActive(index)}>
+                  {face}
+                </button>
+              ) : (
+                <div className="num-face">{face}</div>
+              )}
             </li>
           );
         })}
       </ol>
       <p className="meta">{notes.length ? notes.join(" · ") : "No angel numbers, mirrors, or repeating patterns today. A quiet field is still a message."}</p>
+      {detail && nums[active] != null ? <NumberMeaning value={nums[active]!} kicker="From today's nine" /> : null}
     </div>
+  );
+}
+
+function NumberMeaning({ value, kicker }: { value: number; kicker: string }) {
+  const meaning = universalNumber(value);
+  return (
+    <article className="meaning-plate crystal">
+      <MeaningArt value={meaning.value} seed={meaning.value + 200} root={meaning.root} angel={meaning.angel} title={meaning.title} />
+      <div>
+        <p className="eyebrow">
+          {kicker} · {meaning.angel ? "Angel number" : `Root ${meaning.root}`} · beside {meaning.arcana}
+        </p>
+        <h3>
+          {meaning.value} · {meaning.title}
+        </h3>
+        <p>{meaning.text}</p>
+      </div>
+    </article>
   );
 }
 
@@ -1584,47 +1697,6 @@ function TempleMark() {
       <circle cx="24" cy="24" r="18" fill="none" stroke="var(--gold)" strokeWidth="1.4" />
       <circle cx="24" cy="24" r="8" fill="none" stroke="var(--violet)" strokeWidth="1.2" />
       <path d="M24 6 L26 22 L24 20 L22 22 Z M24 42 L26 26 L24 28 L22 26 Z M6 24 L22 22 L20 24 L22 26 Z M42 24 L26 22 L28 24 L26 26 Z" fill="var(--gold)" />
-    </svg>
-  );
-}
-
-function SuitMark({ suit }: { suit: string }) {
-  const common = { className: "tarot-seal", viewBox: "0 0 64 64", "aria-hidden": true as const };
-  if (suit === "Cups") {
-    return (
-      <svg {...common}>
-        <path d="M18 16h28l-3 18a11 11 0 0 1-22 0Z" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M32 40v8M24 52h16" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      </svg>
-    );
-  }
-  if (suit === "Wands") {
-    return (
-      <svg {...common}>
-        <path d="M20 50 L40 14" stroke="currentColor" strokeWidth="2" />
-        <path d="M34 12h10v8M30 18l8-2" fill="none" stroke="currentColor" strokeWidth="1.4" />
-      </svg>
-    );
-  }
-  if (suit === "Swords") {
-    return (
-      <svg {...common}>
-        <path d="M32 10v36M24 46h16M28 18h8" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      </svg>
-    );
-  }
-  if (suit === "Pentacles") {
-    return (
-      <svg {...common}>
-        <circle cx="32" cy="32" r="14" fill="none" stroke="currentColor" strokeWidth="1.6" />
-        <path d="M32 22l2.6 6.2H41l-5.2 4 2 6.4L32 35.2 26.2 38.6l2-6.4-5.2-4h6.4Z" fill="currentColor" />
-      </svg>
-    );
-  }
-  return (
-    <svg {...common}>
-      <circle cx="32" cy="32" r="14" fill="none" stroke="currentColor" strokeWidth="1.4" />
-      <circle cx="32" cy="32" r="4" fill="currentColor" />
     </svg>
   );
 }

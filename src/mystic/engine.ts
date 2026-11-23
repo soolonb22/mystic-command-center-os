@@ -57,6 +57,7 @@ export type Dragon = {
   started: boolean;
   completed: boolean;
   date: string;
+  bitesDone: number;
   awarded: { generated: boolean; started: boolean; completed: boolean };
 };
 
@@ -94,7 +95,7 @@ export type DB = {
     lastJournal: string;
     lastDragon: string;
   };
-  dragon: { current: Dragon | null; history: Dragon[] };
+  dragon: { current: Dragon | null; open: Dragon[]; history: Dragon[] };
   journalEntries: JournalEntry[];
   synchronicities: SyncItem[];
   tarotHistory: Reading[];
@@ -717,6 +718,99 @@ export function makeNumbers(date: string) {
 
 const ANGELS = new Set([11, 22, 33, 44, 55, 66, 77, 88, 99]);
 
+const NUMBER_ROOTS: { name: string; caption: string; howTo: string }[] = [
+  { name: "", caption: "", howTo: "" },
+  {
+    name: "The Crown",
+    caption: "Absolute unity, the divine spark, pure spiritual will.",
+    howTo: "Name the one beginning that matters. Take its first physical step, and leave the rest of the plan for later.",
+  },
+  {
+    name: "Wisdom",
+    caption: "Intuition, revelation, the primordial spark of creation.",
+    howTo: "Sit with the quieter knowing. Write the first sentence before you explain it away.",
+  },
+  {
+    name: "Writing",
+    caption: "Communication, recording knowledge, manifesting thought.",
+    howTo: "Put the thought where it can be read. Send the message, or write the single line.",
+  },
+  {
+    name: "Cities",
+    caption: "Civilization, structured society, human achievement.",
+    howTo: "Set one boundary or one hour that can hold the work. Build the floor, not the monument.",
+  },
+  {
+    name: "The Crisis",
+    caption: "Sudden upheaval, sweeping away the old order.",
+    howTo: "Do not rebuild the fallen part today. Clear one piece of debris and choose the next safe step.",
+  },
+  {
+    name: "Medicine",
+    caption: "Healing, balance of forces, health and regeneration.",
+    howTo: "Tend the body or the nearest person. A meal, real rest, or a softened tone is the medicine.",
+  },
+  {
+    name: "The Depths",
+    caption: "The depths, unconscious emotions, hidden mysteries.",
+    howTo: "Give the feeling a name without fixing it. Ten quiet minutes is enough contact.",
+  },
+  {
+    name: "The Dance",
+    caption: "The cosmic dance, dynamic balance of forces.",
+    howTo: "Notice what you keep repeating. Keep one loop that feeds you. Stop feeding one that does not.",
+  },
+  {
+    name: "The Return",
+    caption: "Completing the cycle, coming back home, the eternal soul.",
+    howTo: "Close one small circle. Finish the lingering thing, then stop.",
+  },
+];
+
+const ANGEL_LINES: Record<number, string> = {
+  11: "A doorway. Trust the first quiet knowing, then check it in the world before you build on it.",
+  22: "The builder. The vision is ready for edges. Lay one measurable brick and stop while it is still true.",
+  33: "The teacher. Offer what you know without disappearing inside the kindness.",
+  44: "The foundation. Repair the promise, place, or habit that everything else stands on.",
+  55: "Movement with a direction. Change is not the threat. Standing still inside it is.",
+  66: "Practical kindness. A meal, a softened tone, a message that does not perform.",
+  77: "Go inward and come back. If it cannot be said in one honest line, it is not finished.",
+  88: "Enough is already circulating. Notice the resource you have and let a little of it move.",
+  99: "A cycle is closing. Release the old verdict. What remains is simpler than the story.",
+};
+
+export function digitalRoot(value: number) {
+  let n = Math.abs(Math.floor(value));
+  if (n === 0) return 0;
+  while (n > 9) {
+    n = String(n)
+      .split("")
+      .reduce((sum, digit) => sum + Number(digit), 0);
+  }
+  return n;
+}
+
+export function universalNumber(value: number) {
+  const n = Math.min(99, Math.max(1, Math.floor(value)));
+  const root = digitalRoot(n);
+  const tone = NUMBER_ROOTS[root] ?? NUMBER_ROOTS[1]!;
+  const angel = ANGELS.has(n);
+  const arcanaIndex = n % 22;
+  const arcana = MAJORS[arcanaIndex]?.name ?? "The Fool";
+  return {
+    value: n,
+    root,
+    angel,
+    title: tone.name,
+    tone: tone.name,
+    arcana,
+    arcanaIndex,
+    caption: tone.caption,
+    howTo: tone.howTo,
+    text: angel ? `${ANGEL_LINES[n] ?? tone.caption} ${tone.caption}` : tone.caption,
+  };
+}
+
 export type NumberItem = {
   value: number;
   angel: boolean;
@@ -758,19 +852,48 @@ export function inspectNumbers(nums: number[]) {
   return { items, mirrors, runs, echoes };
 }
 
-export function attackLadder(task: string) {
+function shortTask(task: string) {
   const clean = task.replace(/\s+/g, " ").trim();
-  const short = clean.length > 72 ? `${clean.slice(0, 69)}…` : clean;
+  return clean.length > 72 ? `${clean.slice(0, 69)}…` : clean;
+}
+
+export function attackLadder(task: string) {
+  const short = shortTask(task);
   return [
-    `Open the exact place “${short}” lives. Do not start the hard part.`,
-    `Read only the first heading, line, or name related to “${short}”.`,
-    `Write one sentence that moves “${short}” forward.`,
-    `Type a single word connected to “${short}”.`,
-    `Find the file, link, or phone number for “${short}” — then stop.`,
-    `Set a two-minute timer and stay beside “${short}”. Leaving after is allowed.`,
-    `Drink water, then stand or sit where “${short}” happens.`,
-    `Open the tab or the page. That is the whole task.`,
+    `Do one small piece of “${short}”: one item, one sentence, or two minutes. Then stop.`,
+    `Set a five-minute timer and touch “${short}”. Stopping when it rings counts.`,
+    `Open “${short}” and read only the first line. Do not continue.`,
+    `Put the tool for “${short}” where you can see it. The page, the dish, the shoes.`,
+    `Stand or sit in the place “${short}” happens. That is the whole step.`,
+    `Say “${short}” out loud once. Then you are allowed to walk away.`,
   ];
+}
+
+const BITE_LINES = [
+  (task: string) => `One item inside “${task}”. Then stop while it still feels easy.`,
+  (task: string) => `Two minutes on “${task}”. The timer ending is the finish line.`,
+  (task: string) => `Only the next visible piece of “${task}”. Leave the rest for another bite.`,
+  (task: string) => `Clear one obstacle in front of “${task}”: the tab, the mess, the first line.`,
+  (task: string) => `Same quest, half the size: a smaller repeat of “${task}”.`,
+];
+
+export function nextBite(task: string, count: number) {
+  const short = shortTask(task);
+  const line = BITE_LINES[Math.abs(count) % BITE_LINES.length] ?? BITE_LINES[0]!;
+  return line(short);
+}
+
+export function activeDragons(db: DB) {
+  const open = Array.isArray(db.dragon.open) ? db.dragon.open.filter((row) => row && !row.completed) : [];
+  const current = db.dragon.current;
+  if (current && !current.completed && !open.some((row) => row.id === current.id)) return [current, ...open];
+  return open;
+}
+
+export function writeDragons(db: DB, open: Dragon[], currentId?: string | null): DB {
+  const alive = open.filter((row) => !row.completed).slice(0, 40);
+  const wanted = currentId === null ? null : alive.find((row) => row.id === currentId) ?? alive[0] ?? null;
+  return { ...db, dragon: { ...db.dragon, open: alive, current: wanted } };
 }
 
 export function defaultDB(): DB {
@@ -778,7 +901,7 @@ export function defaultDB(): DB {
     profile: { name: "" },
     xp: { value: 0, level: 1, log: [] },
     streaks: { app: 0, journal: 0, dragon: 0, lastApp: "", lastJournal: "", lastDragon: "" },
-    dragon: { current: null, history: [] },
+    dragon: { current: null, open: [], history: [] },
     journalEntries: [],
     synchronicities: [],
     tarotHistory: [],
@@ -810,6 +933,29 @@ function asBool(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function asDragon(value: unknown): Dragon | null {
+  const row = asRecord(value);
+  if (!row || typeof row.task !== "string" || !row.task.trim()) return null;
+  const attacks = Array.isArray(row.attacks) ? row.attacks.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+  const awarded = asRecord(row.awarded);
+  const task = row.task.trim();
+  return {
+    id: asString(row.id) || uid(),
+    task,
+    attacks: attacks.length ? attacks : attackLadder(task),
+    attackIndex: Math.max(0, asNumber(row.attackIndex, 0)),
+    started: asBool(row.started, false),
+    completed: asBool(row.completed, false),
+    date: asString(row.date) || todayKey(),
+    bitesDone: Math.max(0, asNumber(row.bitesDone, 0)),
+    awarded: {
+      generated: asBool(awarded?.generated, true),
+      started: asBool(awarded?.started, false),
+      completed: asBool(awarded?.completed, false),
+    },
+  };
+}
+
 export function mergeDB(raw: unknown): DB {
   const base = defaultDB();
   const root = asRecord(raw);
@@ -836,10 +982,17 @@ export function mergeDB(raw: unknown): DB {
       lastJournal: asString(streaks?.lastJournal),
       lastDragon: asString(streaks?.lastDragon),
     },
-    dragon: {
-      current: (dragon?.current as Dragon | null) ?? null,
-      history: Array.isArray(dragon?.history) ? (dragon.history as Dragon[]).slice(0, 200) : [],
-    },
+    dragon: (() => {
+      const history = Array.isArray(dragon?.history) ? dragon.history.map(asDragon).filter((row): row is Dragon => !!row).slice(0, 200) : [];
+      const fromOpen = Array.isArray(dragon?.open) ? dragon.open.map(asDragon).filter((row): row is Dragon => !!row && !row.completed) : [];
+      const current = asDragon(dragon?.current);
+      const open = current && !current.completed && !fromOpen.some((row) => row.id === current.id) ? [current, ...fromOpen] : fromOpen;
+      return {
+        current: open.find((row) => row.id === current?.id) ?? open[0] ?? null,
+        open: open.slice(0, 40),
+        history,
+      };
+    })(),
     journalEntries: Array.isArray(root.journalEntries) ? (root.journalEntries as JournalEntry[]) : [],
     synchronicities: Array.isArray(root.synchronicities) ? (root.synchronicities as SyncItem[]) : [],
     tarotHistory: Array.isArray(root.tarotHistory) ? (root.tarotHistory as Reading[]) : [],
@@ -885,15 +1038,6 @@ export function rollDaily(db: DB, opts?: { grantTarot?: boolean; now?: Date }): 
   if (next.streaks.lastApp !== today) {
     const app = next.streaks.lastApp === prevKey(today) ? next.streaks.app + 1 : 1;
     next = { ...next, streaks: { ...next.streaks, app, lastApp: today } };
-  }
-  if (next.dragon.current && next.dragon.current.date !== today) {
-    next = {
-      ...next,
-      dragon: {
-        current: null,
-        history: [next.dragon.current, ...next.dragon.history].slice(0, 200),
-      },
-    };
   }
   const savedToday = next.dailyState?.date === today ? next.dailyState : null;
   const savedReading = savedToday?.readingId ? next.tarotHistory.find((reading) => reading.id === savedToday.readingId) : undefined;
@@ -1003,7 +1147,7 @@ export function searchDb(db: DB, q: string): SearchHit[] {
       hits.push({ kind: "Universe", title: note.date, excerpt: note.message, when: note.date });
     }
   }
-  const dragons = [db.dragon.current, ...db.dragon.history].filter((row): row is Dragon => !!row && typeof row.task === "string");
+  const dragons = [...activeDragons(db), ...db.dragon.history];
   for (const dragon of dragons) {
     if (`${dragon.task} ${dragon.attacks.join(" ")}`.toLowerCase().includes(s)) {
       hits.push({ kind: "Dragon", title: dragon.completed ? `${dragon.date} · completed` : dragon.date, excerpt: clip(dragon.task), when: dragon.date });

@@ -502,11 +502,46 @@ body::before {
   font-size: 1.05rem;
 }
 
-.tarot-seal {
-  margin: auto;
-  width: 3.2rem;
-  height: 3.2rem;
-  color: var(--gold);
+.card-art {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 0.7rem;
+}
+
+.card-art.is-reversed {
+  transform: rotate(180deg);
+}
+
+.mini-spread {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(4.6rem, 1fr));
+  gap: 0.5rem;
+}
+
+.mini-card {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 0.7rem;
+}
+
+.mini-card span {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.reading-with-art {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 0.9rem;
+  align-items: start;
 }
 
 .keywords {
@@ -525,15 +560,56 @@ body::before {
   list-style: none;
   margin: 0;
   border-radius: 0.9rem;
-  min-height: 5.2rem;
-  padding: 0.55rem 0.3rem;
+  min-height: 5.6rem;
+  padding: 0.35rem;
+  display: flex;
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--surface) 80%, transparent);
+}
+
+.num-face,
+.num-btn {
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  border: 1px solid var(--line);
-  background: color-mix(in oklab, var(--surface) 80%, transparent);
+  gap: 0.1rem;
+}
+
+.num-btn {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 0.7rem;
+  padding: 0.2rem;
+}
+
+.num-btn.is-selected {
+  outline: 2px solid var(--gold);
+  outline-offset: 1px;
+}
+
+.meaning-art {
+  width: 2.5rem;
+  height: 2.5rem;
+  display: block;
+  border-radius: 0.45rem;
+}
+
+.meaning-plate {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 11rem) 1fr;
+  gap: 1rem;
+  align-items: center;
+}
+
+.meaning-plate .meaning-art {
+  width: 100%;
+  height: auto;
 }
 
 .num-value {
@@ -845,6 +921,11 @@ body::before {
   .spread[data-size="3"],
   .spread[data-size="6"],
   .spread[data-size="9"] {
+    grid-template-columns: 1fr;
+  }
+
+  .reading-with-art,
+  .meaning-plate {
     grid-template-columns: 1fr;
   }
 
